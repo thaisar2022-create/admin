@@ -83,3 +83,6 @@ VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_KEY_HERE
 
 Vite + React 19 + TypeScript + @supabase/supabase-js. No backend of its own —
 the browser talks to Supabase directly with the publishable key.
+
+## Live site
+Deployed on Cloudflare Pages: https://thaisar-admin.pages.dev (project `thaisar-admin`, GitHub auto-deploy from `main`).
