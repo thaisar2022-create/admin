@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase, isSupabaseConfigured, STORAGE_BUCKET } from './supabase';
+import logoUrl from './logo.png';
 import { COURSE_META, FALLBACK_OFFERINGS, MODE_LABELS, formatKyat, tierFor } from './data';
 import type { CatalogRow, CourseRow, ImageRow, Offering, OrderRow, PriceChange, StudentAgg } from './types';
 
@@ -332,7 +333,7 @@ export default function App() {
   return (
     <div>
       <header>
-        <img className="logo" src="/logo.png" alt="Thaisar logo" />
+        <img className="logo" src={logoUrl} alt="Thaisar logo" />
         <div>
           <h1>THAISAR Admin Portal</h1>
           <p>ထိုင်းစာ — Thai Language School · Admin</p>
