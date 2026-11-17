@@ -1,10 +1,24 @@
 export type Mode = 'zoom' | 'video' | 'yangon' | 'mandalay' | 'delivery';
 
+/** Single-level price — on the customer site it is both original and promotion price. */
+export interface LevelPrice {
+  promo: number;
+  original: number;
+}
+
+/** One mode's price in courses.prices JSONB. `levels` holds Level 1 / Level 2
+ *  prices for live modes (zoom/yangon/mandalay); Video has no levels. */
+export interface ModePrice {
+  original: number;
+  promo: number;
+  levels?: { L1?: LevelPrice; L2?: LevelPrice };
+}
+
 export interface CourseRow {
   id: string;
   name: string;
   image_url: string | null;
-  prices: Record<string, { original: number; promo: number }>;
+  prices: Record<string, ModePrice>;
 }
 
 export interface CatalogRow {
@@ -53,7 +67,7 @@ export interface PriceChange {
   at: string;
   courseCode: string;
   mode: string;
-  field: 'original' | 'promo';
+  field: 'original' | 'promo' | 'level1' | 'level2';
   oldPrice: number;
   newPrice: number;
 }

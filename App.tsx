@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase, isSupabaseConfigured, STORAGE_BUCKET } from './supabase';
 import logoUrl from './logo.png';
-import { COURSE_META, FALLBACK_OFFERINGS, MODE_LABELS, formatKyat, tierFor } from './data';
-import type { CatalogRow, CourseRow, ImageRow, Offering, OrderRow, PriceChange, StudentAgg } from './types';
+import { COURSE_META, FALLBACK_LEVEL_PRICES, FALLBACK_OFFERINGS, LIVE_MODES, MODE_LABELS, formatKyat, tierFor } from './data';
+import type { CatalogRow, CourseRow, ImageRow, ModePrice, Offering, OrderRow, PriceChange, StudentAgg } from './types';
 
 type Tab = 'dashboard' | 'orders' | 'students' | 'prices' | 'history';
 
@@ -42,6 +42,12 @@ export default function App() {
   const [batches, setBatches] = useState<Record<string, string>>(() => loadJson(BATCH_KEY, {}));
   const [priceHistory, setPriceHistory] = useState<PriceChange[]>(() => loadJson(HISTORY_KEY, []));
   const [priceDrafts, setPriceDrafts] = useState<Record<string, { original: string; promo: string }>>({});
+  const [levelPrices, setLevelPrices] = useState<Record<string, { l1: number | null; l2: number | null }>>(() => {
+    const init: Record<string, { l1: number | null; l2: number | null }> = {};
+    for (const [k, v] of Object.entries(FALLBACK_LEVEL_PRICES)) init[k] = { ...v };
+    return init;
+  });
+  const [levelDrafts, setLevelDrafts] = useState<Record<string, { l1: string; l2: string }>>({});
   const [posterUrlDrafts, setPosterUrlDrafts] = useState<Record<string, string>>({});
   const [coverUrlDrafts, setCoverUrlDrafts] = useState<Record<string, string>>({});
   const [newOffering, setNewOffering] = useState({ courseId: 'speaking', mode: 'zoom', original: '', promo: '' });
@@ -75,6 +81,21 @@ export default function App() {
         names[c.id] = c.name;
       }
       setCourseCovers(covers);
+      // Per-level prices live in courses.prices JSONB:
+      // prices.<mode>.levels = { L1: {promo, original}, L2: {promo, original} }
+      const levels: Record<string, { l1: number | null; l2: number | null }> = {};
+      for (const [k, v] of Object.entries(FALLBACK_LEVEL_PRICES)) levels[k] = { ...v };
+      for (const c of courses) {
+        const prices = (c.prices || {}) as Record<string, ModePrice>;
+        for (const [mode, mp] of Object.entries(prices)) {
+          const lv = mp?.levels;
+          if (!lv) continue;
+          const l1 = lv.L1 ? Number(lv.L1.promo ?? lv.L1.original) : null;
+          const l2 = lv.L2 ? Number(lv.L2.promo ?? lv.L2.original) : null;
+          if (l1 != null || l2 != null) levels[`${c.id}:${mode}`] = { l1, l2 };
+        }
+      }
+      setLevelPrices(levels);
       const modeImages: Record<string, string> = {};
       for (const row of images) {
         if (row.image_url) modeImages[`${String(row.course_code).toUpperCase()}:${row.mode}`] = row.image_url;
@@ -191,9 +212,16 @@ export default function App() {
       return;
     }
     const { data: courseRows } = await supabase.from('courses').select('prices').eq('id', o.courseId).single();
-    const prices = { ...((courseRows as { prices?: Record<string, { original: number; promo: number }> } | null)?.prices || {}) };
-    prices[o.mode] = { original, promo };
-    await supabase.from('courses').update({ prices }).eq('id', o.courseId);
+    const prices = { ...((courseRows as { prices?: Record<string, ModePrice> } | null)?.prices || {}) };
+    // Preserve any per-level prices — replacing the whole mode object would
+    // silently wipe Level 1 / Level 2 prices the customer site reads.
+    const prevMode = prices[o.mode] || { original, promo };
+    prices[o.mode] = { original, promo, ...(prevMode.levels ? { levels: prevMode.levels } : {}) };
+    const { error: coursesErr } = await supabase.from('courses').update({ prices }).eq('id', o.courseId);
+    if (coursesErr) {
+      setError(coursesErr.message);
+      return;
+    }
     const changes: PriceChange[] = [];
     if (original !== o.original) changes.push({ at: new Date().toISOString(), courseCode: o.courseCode, mode: o.mode, field: 'original', oldPrice: o.original, newPrice: original });
     if (promo !== o.promo) changes.push({ at: new Date().toISOString(), courseCode: o.courseCode, mode: o.mode, field: 'promo', oldPrice: o.promo, newPrice: promo });
@@ -209,6 +237,53 @@ export default function App() {
       return next;
     });
     setNotice(`${o.courseCode} ${MODE_LABELS[o.mode]} ဈေး သိမ်းပြီးပြီ — customer site မှာ တစ်ခါတည်း ပေါ်မယ်။`);
+  }
+
+  /** Save a single Level 1 / Level 2 price. The level price is both the
+   *  original and the promotion price on the customer site. Level prices are
+   *  stored only in courses.prices JSONB (course_catalog keeps L1+2 only),
+   *  and the L1+2 original/promo of the same mode are preserved. */
+  async function saveLevelPrice(o: Offering, level: 'L1' | 'L2') {
+    const key = posterKey(o);
+    const draft = levelDrafts[key];
+    const current = levelPrices[key] || { l1: null, l2: null };
+    const value = draft ? Number(level === 'L1' ? draft.l1 : draft.l2) : (level === 'L1' ? current.l1 : current.l2);
+    if (!supabase) {
+      setError('Supabase မချိတ်ရသေးပါ — .env မှာ anon key ထည့်ပေးပါ။');
+      return;
+    }
+    if (value == null || !Number.isFinite(value) || value <= 0) {
+      setError('Level ဈေးနှုန်း မှန်ကန်အောင် ထည့်ပေးပါ။');
+      return;
+    }
+    const { data: courseRows, error: readErr } = await supabase.from('courses').select('prices').eq('id', o.courseId).single();
+    if (readErr) {
+      setError(readErr.message);
+      return;
+    }
+    const prices = { ...((courseRows as { prices?: Record<string, ModePrice> } | null)?.prices || {}) };
+    const prevMode = prices[o.mode] || { original: o.original, promo: o.promo };
+    const prevLevels = { ...(prevMode.levels || {}) };
+    prevLevels[level] = { promo: value, original: value };
+    prices[o.mode] = { ...prevMode, levels: prevLevels };
+    const { error: writeErr } = await supabase.from('courses').update({ prices }).eq('id', o.courseId);
+    if (writeErr) {
+      setError(writeErr.message);
+      return;
+    }
+    const oldPrice = level === 'L1' ? current.l1 : current.l2;
+    if (oldPrice !== value) {
+      const next = [{ at: new Date().toISOString(), courseCode: o.courseCode, mode: o.mode, field: (level === 'L1' ? 'level1' : 'level2') as PriceChange['field'], oldPrice: oldPrice ?? 0, newPrice: value }, ...priceHistory].slice(0, 200);
+      setPriceHistory(next);
+      saveJson(HISTORY_KEY, next);
+    }
+    setLevelPrices((prev) => ({ ...prev, [key]: { ...current, ...(level === 'L1' ? { l1: value } : { l2: value }) } }));
+    setLevelDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setNotice(`${o.courseCode} ${MODE_LABELS[o.mode]} Level ${level === 'L1' ? '1' : '2'} ဈေး သိမ်းပြီးပြီ — customer site မှာ တစ်ခါတည်း ပေါ်မယ်။`);
   }
 
   async function applyPosterUrl(o: Offering, url: string | null) {
@@ -471,6 +546,9 @@ export default function App() {
                 {list.map((o) => {
                   const key = posterKey(o);
                   const draft = priceDrafts[key] || { original: String(o.original), promo: String(o.promo) };
+                  const hasLevels = LIVE_MODES.includes(o.mode) && (o.courseId === 'speaking' || o.courseId === 'skills');
+                  const lv = levelPrices[key] || { l1: null, l2: null };
+                  const lvDraft = levelDrafts[key] || { l1: lv.l1 != null ? String(lv.l1) : '', l2: lv.l2 != null ? String(lv.l2) : '' };
                   return (
                     <div className="offering" key={key}>
                       <h3>{o.courseCode} · {MODE_LABELS[o.mode] || o.mode}</h3>
@@ -483,6 +561,19 @@ export default function App() {
                             <button className="btn small" onClick={() => savePrice(o)}>ဈေး သိမ်းမယ်</button>
                           </div>
                           <p className="muted">ကောက်ခံမယ့် ဈေးက Promotion ဈေးပါ။ သိမ်းပြီးရင် customer site မှာ တစ်ခါတည်း ပေါ်မယ်။</p>
+                          {hasLevels && (
+                            <div>
+                              <div className="row">
+                                <label>Level 1 <input type="number" value={lvDraft.l1} onChange={(e) => setLevelDrafts((p) => ({ ...p, [key]: { ...lvDraft, l1: e.target.value } }))} /></label>
+                                <button className="btn small" onClick={() => saveLevelPrice(o, 'L1')}>Level 1 ဈေး သိမ်းမယ်</button>
+                              </div>
+                              <div className="row" style={{ marginTop: 8 }}>
+                                <label>Level 2 <input type="number" value={lvDraft.l2} onChange={(e) => setLevelDrafts((p) => ({ ...p, [key]: { ...lvDraft, l2: e.target.value } }))} /></label>
+                                <button className="btn small" onClick={() => saveLevelPrice(o, 'L2')}>Level 2 ဈေး သိမ်းမယ်</button>
+                              </div>
+                              <p className="muted">Level 1 / Level 2 ဈေးက တစ်ဈေးတည်းပါ (Original = Promotion) — customer site မှာ Level ရွေးရင် ဒီဈေးနဲ့ ကောက်ခံမယ်။</p>
+                            </div>
+                          )}
                           <div className="row">
                             <label>Batch နံပါတ် <input type="text" placeholder="ဥပမာ Batch 5" value={batches[key] || ''} onChange={(e) => setBatch(key, e.target.value)} style={{ width: 140 }} /></label>
                             <span className="muted">အတန်းချိန် / ဆရာမနာမည် / စတင်ရက်က poster ပုံထဲမှာပဲ ပါတယ် — ဒီမှာ မထည့်ပါ။</span>
@@ -546,7 +637,7 @@ export default function App() {
                   <tr key={i}>
                     <td>{new Date(h.at).toLocaleString()}</td>
                     <td>{h.courseCode} · {MODE_LABELS[h.mode] || h.mode}</td>
-                    <td>{h.field === 'original' ? 'Original' : 'Promotion'}</td>
+                    <td>{h.field === 'original' ? 'Original' : h.field === 'promo' ? 'Promotion' : h.field === 'level1' ? 'Level 1' : 'Level 2'}</td>
                     <td>{formatKyat(h.oldPrice)}</td>
                     <td>{formatKyat(h.newPrice)}</td>
                   </tr>

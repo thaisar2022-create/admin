@@ -6,7 +6,7 @@ import type { Offering } from './types';
  * rows verified 2026-11-15. Supabase data always wins when available.
  */
 export const FALLBACK_OFFERINGS: Offering[] = [
-  { courseId: 'speaking', courseCode: 'TMM', courseName: 'TMM ထိုင်းစကားပြောသီးသန့်', mode: 'zoom', original: 300000, promo: 250000, imageUrl: null },
+  { courseId: 'speaking', courseCode: 'TMM', courseName: 'TMM ထိုင်းစကားပြောသီးသန့်', mode: 'zoom', original: 300000, promo: 260000, imageUrl: null },
   { courseId: 'speaking', courseCode: 'TMM', courseName: 'TMM ထိုင်းစကားပြောသီးသန့်', mode: 'video', original: 150000, promo: 70000, imageUrl: null },
   { courseId: 'speaking', courseCode: 'TMM', courseName: 'TMM ထိုင်းစကားပြောသီးသန့်', mode: 'yangon', original: 400000, promo: 350000, imageUrl: null },
   { courseId: 'speaking', courseCode: 'TMM', courseName: 'TMM ထိုင်းစကားပြောသီးသန့်', mode: 'mandalay', original: 400000, promo: 350000, imageUrl: null },
@@ -16,6 +16,20 @@ export const FALLBACK_OFFERINGS: Offering[] = [
   { courseId: 'skills', courseCode: 'TLS', courseName: 'TLS Thai Language Special', mode: 'mandalay', original: 600000, promo: 500000, imageUrl: null },
   { courseId: 'practical-thai', courseCode: 'BOOK', courseName: 'လက်တွေ့အသုံးချ ထိုင်းဘာသာစကားစာအုပ်', mode: 'delivery', original: 150000, promo: 75000, imageUrl: null },
 ];
+
+/** Fallback Level 1 / Level 2 prices (live modes only) — matches live Supabase
+ *  courses.prices levels verified 2026-11-17. Key is "courseId:mode". */
+export const FALLBACK_LEVEL_PRICES: Record<string, { l1: number; l2: number }> = {
+  'speaking:zoom': { l1: 155000, l2: 150000 },
+  'speaking:yangon': { l1: 200000, l2: 200000 },
+  'speaking:mandalay': { l1: 200000, l2: 200000 },
+  'skills:zoom': { l1: 200000, l2: 200000 },
+  'skills:yangon': { l1: 300000, l2: 300000 },
+  'skills:mandalay': { l1: 300000, l2: 300000 },
+};
+
+/** Live modes (Zoom / Yangon / Mandalay) are the only modes with Level 1/2 prices. */
+export const LIVE_MODES = ['zoom', 'yangon', 'mandalay'];
 
 export const MODE_LABELS: Record<string, string> = {
   zoom: 'Zoom',
